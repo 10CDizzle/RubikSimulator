@@ -11,7 +11,7 @@ is_solving = False
 
 app = Ursina()
 
-cube_model = RubiksCube(3, 3, 3)
+cube_model = RubiksCube(3)
 viewer = RubiksCubeViewer(cube_model)
 
 solve_button = Button(text='Solve', color=color.azure, position=(0.7, 0.45), scale=(0.2, 0.1))
@@ -39,7 +39,7 @@ def update():
                 is_solving = False
 
     # --- Rotate viewer with WASD ---
-    rotation_speed = 40
+    rotation_speed = 150
     dt = time.dt
     if held_keys['a']:
         viewer.parent_entity.rotation_y += rotation_speed * dt
