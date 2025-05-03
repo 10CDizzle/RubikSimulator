@@ -1,253 +1,354 @@
-# In c:\Users\Chris\Documents\GitHub\RubikSimulator\cube\cube.py
-
+# c:\Users\Chris\Documents\GitHub\RubikSimulator\cube\cube.py
 import numpy as np
-# Import solver functions - calculate_solve_steps might need adjustment
-# if it relies solely on the string state now.
-from .solver import calculate_solve_steps, _convert_state_to_kociemba_string
+import random
+from typing import Dict, List, Tuple, Optional
+from collections import Counter # Import Counter
+
+# Import the solver function
+from . import solver # Use relative import assuming solver.py is in the same directory
+
+# Consistent color mapping (matches solver.py)
+# 0:U (White, Y=n), 1:D (Yellow, Y=0), 2:L (Orange, X=0),
+# 3:R (Red, X=n),   4:F (Green, Z=n),  5:B (Blue, Z=0)
+# Using descriptive names for clarity
+COLOR_MAP_INT_TO_CHAR = {
+    0: 'U', 1: 'D', 2: 'L', 3: 'R', 4: 'F', 5: 'B'
+}
+COLOR_MAP_CHAR_TO_INT = {v: k for k, v in COLOR_MAP_INT_TO_CHAR.items()}
+
+# Standard face names
+FACE_NAMES = ['U', 'D', 'L', 'R', 'F', 'B']
 
 class RubiksCube:
     """
-    Represents a Rubik's Cube of size n x n x n.
-    Uses a 3D NumPy array state[x, y, z] where indices represent colors.
-    Axes: X (L->R), Y (D->U), Z (B->F)
-    Colors: 0:U(Y=n-1), 1:D(Y=0), 2:L(X=0), 3:R(X=n-1), 4:F(Z=n-1), 5:B(Z=0)
+    Represents a 3x3x3 Rubik's Cube and handles state manipulation through moves.
+
+    The cube state is stored internally as a dictionary of 6 NumPy arrays,
+    each representing the colors of the facelets on one face.
+
+    Provides methods for applying moves, scrambling, resetting, checking if solved,
+    retrieving the state in different formats, and getting solve steps.
     """
 
-    def __init__(self, size=3):
-        if not isinstance(size, int) or size < 2:
-            raise ValueError("Cube size must be an integer >= 2.")
+    def __init__(self, size: int = 3):
+        """
+        Initializes the Rubik's Cube.
+
+        Args:
+            size: The dimension of the cube (e.g., 3 for a 3x3x3).
+                  Currently, only size 3 is fully supported due to solver integration.
+        """
+        if size != 3:
+            # While the face-based representation could handle NxN,
+            # the solver integration and get_state_for_solver are hardcoded for 3x3.
+            raise ValueError("Currently only supports 3x3x3 cubes due to solver compatibility.")
         self.size = size
-        self.n_max = size - 1 # Maximum index
+        self.n = size - 1  # Max index (e.g., 2 for 3x3)
+        self.faces: Dict[str, np.ndarray] = self._create_solved_faces()
 
-        # Initialize state array (e.g., -1 for interior, 0-5 for surface colors)
-        self.state = np.full((size, size, size), -1, dtype=int)
+        # --- Print color counts on initialization ---
+        print("--- Initial Cube State Color Counts ---")
+        all_colors = []
+        for face_array in self.faces.values():
+            all_colors.extend(face_array.flatten()) # Add all colors from the face
 
-        # --- Initialize Solved State ---
-        # Assign face colors ONLY to the surface layers
-        self.state[:, self.n_max, :] = 0  # Top face (U): White
-        self.state[:, 0, :] = 1           # Bottom face (D): Yellow
-        self.state[0, :, :] = 2           # Left face (L): Orange
-        self.state[self.n_max, :, :] = 3  # Right face (R): Red
-        self.state[:, :, self.n_max] = 4  # Front face (F): Green
-        self.state[:, :, 0] = 5           # Back face (B): Blue
+        color_counts = Counter(all_colors)
+        expected_count = size * size # e.g., 9 for a 3x3
 
-        # Correct centers for odd-sized cubes (overwritten by broad assignments)
-        if size % 2 != 0:
-            center = size // 2
-            self.state[center, self.n_max, center] = 0 # U center
-            self.state[center, 0, center] = 1           # D center
-            self.state[0, center, center] = 2           # L center
-            self.state[self.n_max, center, center] = 3  # R center
-            self.state[center, center, self.n_max] = 4  # F center
-            self.state[center, center, 0] = 5           # B center
-        # --- End Solved State Init ---
+        for color_index in range(len(FACE_NAMES)): # Iterate 0 through 5
+            count = color_counts.get(color_index, 0)
+            color_char = COLOR_MAP_INT_TO_CHAR.get(color_index, '?')
+            print(f"Color {color_char} ({color_index}): {count} squares (Expected: {expected_count})")
+            if count != expected_count:
+                 print(f"  WARNING: Unexpected count for color {color_char}!")
+        print("---------------------------------------")
+        # --- End Print Section ---
 
-        self.solution_moves = []
 
-    def apply_move(self, move):
+    def _create_solved_faces(self) -> Dict[str, np.ndarray]:
+        """Creates the face dictionary representing a solved cube."""
+        return {
+            face: np.full((self.size, self.size), COLOR_MAP_CHAR_TO_INT[face], dtype=int)
+            for face in FACE_NAMES
+        }
+
+    def reset(self) -> None:
+        """Resets the cube to the solved state."""
+        self.faces = self._create_solved_faces()
+
+    def get_state_faces(self) -> Dict[str, np.ndarray]:
         """
-        Applies a single outer-layer move (e.g., 'U', 'R'', 'F2')
-        to the cube's state for size n.
-        Does not currently support slice or wide moves (M, E, S, Uw, etc.).
+        Returns the current state as a dictionary of faces (deep copy).
+
+        Returns:
+            A dictionary where keys are face names ('U', 'D', 'L', 'R', 'F', 'B')
+            and values are NxN NumPy arrays of color indices.
         """
-        if not move or not isinstance(move, str):
-            print("Warning: Invalid move format.")
+        return {face: arr.copy() for face, arr in self.faces.items()}
+
+    def get_state_for_solver(self) -> np.ndarray:
+        """
+        Constructs the 3D numpy array representation from the face data,
+        matching the specific format expected by the Kociemba solver's
+        _convert_state_to_kociemba_string function in solver.py.
+
+        Returns:
+            A 3x3x3 NumPy array representing the cube state for the solver.
+
+        Raises:
+            ValueError: If the cube size is not 3x3x3.
+        """
+        if self.size != 3:
+             raise ValueError("Solver state generation only supported for 3x3x3 cubes.")
+
+        state_3d = np.full((self.size, self.size, self.size), -1, dtype=int)
+        n = self.n
+
+        # --- Map Facelets ---
+        # U Face (Y=n)
+        for x in range(self.size):
+            for z in range(self.size):
+                state_3d[x, n, z] = self.faces['U'][z, x]
+        # R Face (X=n)
+        for y in range(self.size):
+            for z in range(self.size):
+                state_3d[n, y, z] = self.faces['R'][n - y, z]
+        # F Face (Z=n)
+        for x in range(self.size):
+            for y in range(self.size):
+                state_3d[x, y, n] = self.faces['F'][n - y, x]
+        # D Face (Y=0)
+        for x in range(self.size):
+            for z in range(self.size):
+                state_3d[x, 0, z] = self.faces['D'][n - z, x]
+        # L Face (X=0)
+        for y in range(self.size):
+            for z in range(self.size):
+                state_3d[0, y, z] = self.faces['L'][n - y, n - z]
+        # B Face (Z=0)
+        for x in range(self.size):
+            for y in range(self.size):
+                state_3d[x, y, 0] = self.faces['B'][n - y, n - x]
+
+        if np.any(state_3d == -1):
+             print("Warning: Some positions in the solver state array were not assigned.")
+
+        return state_3d
+
+    def apply_move(self, move_str: str) -> None:
+        """
+        Applies a sequence of moves specified in standard cube notation.
+
+        Args:
+            move_str: A string containing space-separated moves (e.g., "R U R' U2 F").
+
+        Note:
+            This method updates the internal logical state of the cube *instantly*.
+            For visual animation, this should typically be called *after* the animation in the viewer is complete.
+        """
+        moves = move_str.strip().split()
+        for move in moves:
+            self._apply_single_move(move)
+
+    def _apply_single_move(self, move: str) -> None:
+        """Applies a single move notation (e.g., 'U', "R'", 'F2')."""
+        # --- Internal state update ---
+        # This function performs the logical manipulation of the face arrays.
+        # It does not handle visual animation.
+        if not move:
             return
 
-        face_char = move[0]
-        direction = 1 # Clockwise
-        num_rotations = 1 # 90 degrees clockwise
+        # --- Parse Move ---
+        # Determine face, direction (1=CW, -1=CCW, 2=180), and rotation counts
+        face_char = move[0].upper()
+        if face_char not in FACE_NAMES:
+            raise ValueError(f"Invalid move face: {face_char} in move '{move}'")
 
-        if len(move) > 1:
+        if len(move) == 1:
+            direction = 1
+        elif len(move) == 2:
             if move[1] == "'":
-                direction = -1 # Counter-clockwise
-                num_rotations = 3 # Equivalent to 3 clockwise 90-degree turns
+                direction = -1
             elif move[1] == '2':
-                direction = 2 # Double turn
-                num_rotations = 2 # Equivalent to 2 clockwise 90-degree turns
-            # Add support for other modifiers like 'w' or numbers for layers later if needed
-
-        n = self.n_max # Use max index
-
-        # --- Rotate Face Layer ---
-        # Determine the slice indices and rotation axis/direction for np.rot90
-        if face_char == 'U':   layer_slice, axes_rot = (slice(None), n, slice(None)), (0, 2)
-        elif face_char == 'D': layer_slice, axes_rot = (slice(None), 0, slice(None)), (0, 2)
-        elif face_char == 'L': layer_slice, axes_rot = (0, slice(None), slice(None)), (1, 2)
-        elif face_char == 'R': layer_slice, axes_rot = (n, slice(None), slice(None)), (1, 2)
-        elif face_char == 'F': layer_slice, axes_rot = (slice(None), slice(None), n), (0, 1)
-        elif face_char == 'B': layer_slice, axes_rot = (slice(None), slice(None), 0), (0, 1)
+                direction = 2
+            else:
+                raise ValueError(f"Invalid move modifier: {move[1]} in move '{move}'")
         else:
-            print(f"Warning: Unknown move face '{face_char}'. Ignoring.")
-            return
+             raise ValueError(f"Invalid move format: {move}")
 
-        # Determine k for np.rot90 based on face and direction
-        # (This requires careful mapping of axes and desired rotation)
-        k = direction
-        if face_char in ('U', 'R', 'F'):
-             k = -direction # U, R, F need negative k for clockwise visual rotation
-        if face_char in ('D', 'L', 'B'):
-             k = direction
+        # --- Perform Rotation ---
+        self._rotate_cube(face_char, direction)
 
-        # Apply the rotation to the face layer
-        original_face = self.state[layer_slice].copy()
-        rotated_face = np.rot90(original_face, k=k, axes=axes_rot)
-        self.state[layer_slice] = rotated_face
+    def _rotate_cube(self, face_char: str, direction: int) -> None:
+        """
+        Rotates the specified face and updates adjacent facelets.
 
-        # --- Rotate Adjacent Side Pieces (Edges/Corners in the slice) ---
-        # This requires generalized slicing based on 'n'
-        # Apply the cycle swap logic 'num_rotations' times
-        temp_state = self.state.copy() # Use a copy to read from for swaps
-        for _ in range(num_rotations):
-            current_state = temp_state.copy() # State before this specific 90-deg turn
-            if face_char == 'U': # Y=n plane rotation (Affects R[?,n,?], F[?,n,n], L[0,n,?], B[?,n,0])
-                temp_state[n, n, :] = current_state[:, n, n]     # F top col -> R top row
-                temp_state[:, n, n] = current_state[0, n, ::-1] # L top row (rev) -> F top col
-                temp_state[0, n, :] = current_state[:, n, 0]     # B top col -> L top row
-                temp_state[:, n, 0] = current_state[n, n, ::-1] # Original R top row (rev) -> B top col
-            elif face_char == 'D': # Y=0 plane rotation (Affects R[?,0,?], B[?,0,0], L[0,0,?], F[?,0,n])
-                temp_state[n, 0, :] = current_state[:, 0, 0][::-1] # B bottom col (rev) -> R bottom row
-                temp_state[:, 0, 0] = current_state[0, 0, :]     # L bottom row -> B bottom col
-                temp_state[0, 0, :] = current_state[:, 0, n][::-1] # F bottom col (rev) -> L bottom row
-                temp_state[:, 0, n] = current_state[n, 0, :]     # Original R bottom row -> F bottom col
-            elif face_char == 'L': # X=0 plane rotation (Affects U[0,n,?], B[0,?,0], D[0,0,?], F[0,?,n])
-                temp_state[0, :, n] = current_state[0, n, ::-1] # U left edge (rev) -> F left col
-                temp_state[0, n, :] = current_state[0, :, 0]     # B left col -> U left edge
-                temp_state[0, :, 0] = current_state[0, 0, ::-1] # D left edge (rev) -> B left col
-                temp_state[0, 0, :] = current_state[0, :, n]     # Original F left col -> D left edge
-            elif face_char == 'R': # X=n plane rotation (Affects U[n,n,?], F[n,?,n], D[n,0,?], B[n,?,0])
-                temp_state[n, :, n] = current_state[n, 0, :]     # D right edge -> F right col
-                temp_state[n, 0, :] = current_state[n, :, 0][::-1] # B right col (rev) -> D right edge
-                temp_state[n, :, 0] = current_state[n, n, :]     # U right edge -> B right col
-                temp_state[n, n, :] = current_state[n, :, n][::-1] # Original F right col (rev) -> U right edge
-            elif face_char == 'F': # Z=n plane rotation (Affects U[?,n,n], R[n,?,n], D[?,0,n], L[0,?,n])
-                temp_state[:, n, n] = current_state[0, ::-1, n] # L front col (rev) -> U bottom edge
-                temp_state[0, :, n] = current_state[:, 0, n]     # D top edge -> L front col
-                temp_state[:, 0, n] = current_state[n, ::-1, n] # R front col (rev) -> D top edge
-                temp_state[n, :, n] = current_state[:, n, n]     # Original U bottom edge -> R front col
-            elif face_char == 'B': # Z=0 plane rotation (Affects U[?,n,0], L[0,?,0], D[?,0,0], R[n,?,0])
-                temp_state[:, n, 0] = current_state[n, :, 0]     # R back col -> U top edge
-                temp_state[n, :, 0] = current_state[:, 0, 0][::-1] # D bottom edge (rev) -> R back col
-                temp_state[:, 0, 0] = current_state[0, ::-1, 0] # L back col (rev) -> D bottom edge
-                temp_state[0, :, 0] = current_state[:, n, 0]     # Original U top edge -> L back col
+        Args:
+            face_char: The face to rotate ('U', 'D', 'L', 'R', 'F', 'B').
+            direction: The direction and amount (1: CW 90, -1: CCW 90, 2: 180).
 
-        self.state = temp_state # Assign the final state after all rotations
+        This method directly manipulates the `self.faces` numpy arrays.
+        """
+        if direction == 1:
+            rot_count_face = -1 # np.rot90 is CCW
+            rot_count_sides = 1 # CW cycle
+        elif direction == -1:
+            rot_count_face = 1
+            rot_count_sides = 3 # 3 CW cycles = 1 CCW cycle
+        elif direction == 2:
+            rot_count_face = -2
+            rot_count_sides = 2
+        else:
+            raise ValueError(f"Internal error: Invalid direction {direction}")
 
-    def scramble(self, num_moves=None):
-        """Applies a series of random outer-layer moves."""
-        if num_moves is None:
-            # Scale scramble length roughly with size (e.g., 3x3=20, 4x4=40, 5x5=60)
-             num_moves = self.size * self.size * 2 + 5 # Heuristic
+        # 1. Rotate the face itself
+        self.faces[face_char] = np.rot90(self.faces[face_char], k=rot_count_face)
 
-        moves = ['U', 'D', 'L', 'R', 'F', 'B']
+        # 2. Cycle the adjacent side facelets
+        n = self.n
+        for _ in range(rot_count_sides): # Apply CW cycle 'rot_count_sides' times
+            if face_char == 'U': # CW Cycle: F[0,:] -> R[0,:] -> B[0,:] -> L[0,:] -> F[0,:]
+                temp = self.faces['F'][0, :].copy()
+                self.faces['F'][0, :] = self.faces['L'][0, :]
+                self.faces['L'][0, :] = self.faces['B'][0, :]
+                self.faces['B'][0, :] = self.faces['R'][0, :]
+                self.faces['R'][0, :] = temp
+            elif face_char == 'D': # CW Cycle: F[n,:] -> L[n,:] -> B[n,:] -> R[n,:] -> F[n,:]
+                temp = self.faces['F'][n, :].copy()
+                self.faces['F'][n, :] = self.faces['R'][n, :]
+                self.faces['R'][n, :] = self.faces['B'][n, :]
+                self.faces['B'][n, :] = self.faces['L'][n, :]
+                self.faces['L'][n, :] = temp
+            elif face_char == 'L': # CW Cycle: U[:,0] -> B[::-1,n] -> D[:,0] -> F[:,0] -> U[:,0]
+                # U left col -> F left col -> D left col -> B left col (reversed) -> U left col
+                temp = self.faces['U'][:, 0].copy()
+                self.faces['U'][:, 0] = self.faces['F'][:, 0]
+                self.faces['F'][:, 0] = self.faces['D'][:, 0]
+                # B face: [n-y, n-x]. Col n means n-x=n -> x=0 (Left col relative to B view)
+                self.faces['D'][:, 0] = self.faces['B'][::-1, n]
+                self.faces['B'][::-1, n] = temp
+            elif face_char == 'R': # CW Cycle: U[:,n] -> F[:,n] -> D[:,n] -> B[::-1,0] -> U[:,n]
+                # U right col -> B right col (reversed) -> D right col -> F right col -> U right col
+                temp = self.faces['U'][:, n].copy()
+                # B face: [n-y, n-x]. Col 0 means n-x=0 -> x=n (Right col relative to B view)
+                self.faces['U'][:, n] = self.faces['B'][::-1, 0]
+                self.faces['B'][::-1, 0] = self.faces['D'][:, n]
+                self.faces['D'][:, n] = self.faces['F'][:, n]
+                self.faces['F'][:, n] = temp
+            elif face_char == 'F': # CW Cycle: U[n,:] -> R[:,0] -> D[0,::-1] -> L[::-1,0] -> U[n,:]
+                # U bottom row -> R back col -> D front row (reversed) -> L front col (reversed) -> U bottom row
+                temp = self.faces['U'][n, :].copy()
+                # L face: [n-y, n-z]. Col 0 means n-z=0 -> z=n (Front col relative to L view)
+                self.faces['U'][n, :] = self.faces['L'][::-1, 0]
+                # D face: [n-z, x]. Row 0 means n-z=0 -> z=n (Front row relative to D view)
+                self.faces['L'][:, 0] = self.faces['D'][0, ::-1]
+                # R face: [n-y, z]. Col 0 means z=0 (Back col relative to R view)
+                self.faces['D'][0, :] = self.faces['R'][:, 0]
+                self.faces['R'][:, 0] = temp
+            elif face_char == 'B': # CW Cycle: U[0,:] -> L[::-1,n] -> D[n,:] -> R[:,n] -> U[0,:]
+                # U top row -> R front col -> D back row (reversed) -> L back col (reversed) -> U top row
+                temp = self.faces['U'][0, :].copy()
+                # R face: [n-y, z]. Col n means z=n (Front col relative to R view)
+                self.faces['U'][0, :] = self.faces['R'][:, n]
+                # D face: [n-z, x]. Row n means n-z=n -> z=0 (Back row relative to D view)
+                self.faces['R'][:, n] = self.faces['D'][n, ::-1]
+                # L face: [n-y, n-z]. Col n means n-z=n -> z=0 (Back col relative to L view)
+                self.faces['D'][n, :] = self.faces['L'][::-1, n]
+                self.faces['L'][:, n] = temp[::-1] # Reverse U top row going to L back col
+
+
+    def scramble(self, num_moves: int = 25, seed: Optional[int] = None) -> str:
+        """
+        Applies a random sequence of moves to scramble the cube.
+
+        Args:
+            num_moves: The number of random moves to apply.
+            seed: An optional random seed for reproducible scrambles.
+
+        Returns:
+            The scramble sequence string that was applied.
+        """
+        if seed is not None:
+            random.seed(seed)
+
         modifiers = ['', "'", '2']
         scramble_sequence = []
         last_move_face = None
 
-        print(f"Scrambling size {self.size} cube with {num_moves} moves...")
         for _ in range(num_moves):
-            while True:
-                move_face = np.random.choice(moves)
-                if move_face != last_move_face: # Avoid R R', R R2 etc.
-                    break
-            modifier = np.random.choice(modifiers)
-            move = move_face + modifier
-            self.apply_move(move)
-            scramble_sequence.append(move)
+            possible_faces = [f for f in FACE_NAMES if f != last_move_face]
+            move_face = random.choice(possible_faces)
+            modifier = random.choice(modifiers)
+            scramble_sequence.append(move_face + modifier)
             last_move_face = move_face
 
-        print(f"Scrambled with: {' '.join(scramble_sequence)}")
-        self.solution_moves = []
-        return scramble_sequence
+        scramble_str = " ".join(scramble_sequence)
+        self.apply_move(scramble_str)
+        return scramble_str
 
-    def get_solve_steps(self):
-        """
-        Calculates solve steps. Currently only supports 3x3 using Kociemba.
-        """
-        if self.size == 3:
-            print("Attempting Kociemba solve for 3x3...")
-            try:
-                # Need the conversion function back if using Kociemba
-                kociemba_string = _convert_state_to_kociemba_string(self.state.copy())
-                print("DEBUG: State string passed to solver:", kociemba_string)
-                # Pass the string state directly to the solver function
-                self.solution_moves = calculate_solve_steps(kociemba_string) # Assuming solver takes string
-            except NameError:
-                 print("Error: _convert_state_to_kociemba_string function not found.")
-                 self.solution_moves = []
-            except Exception as e:
-                print(f"Error during 3x3 solving: {e}")
-                self.solution_moves = []
-        else:
-            print(f"Solving not implemented for cube size {self.size}.")
-            self.solution_moves = [] # No solver for n!=3 implemented
-
-        return self.solution_moves.copy()
-
-    def is_solved(self):
-        """Checks if the cube is in the solved state for size n."""
-        n = self.n_max
-        try:
-            # Check each face: all facelets must match the color of a reference piece on that face
-            # For odd cubes, the center is the reference. For even, any piece can be reference.
-            ref_u = self.state[n//2, n, n//2] # Reference color for U face
-            if not np.all(self.state[:, n, :] == ref_u): return False
-            ref_d = self.state[n//2, 0, n//2] # Reference color for D face
-            if not np.all(self.state[:, 0, :] == ref_d): return False
-            ref_l = self.state[0, n//2, n//2] # Reference color for L face
-            if not np.all(self.state[0, :, :] == ref_l): return False
-            ref_r = self.state[n, n//2, n//2] # Reference color for R face
-            if not np.all(self.state[n, :, :] == ref_r): return False
-            ref_f = self.state[n//2, n//2, n] # Reference color for F face
-            if not np.all(self.state[:, :, n] == ref_f): return False
-            ref_b = self.state[n//2, n//2, 0] # Reference color for B face
-            if not np.all(self.state[:, :, 0] == ref_b): return False
-        except IndexError:
-             print("Error checking solved state: Index out of bounds.")
-             return False
+    def is_solved(self) -> bool:
+        """Checks if the cube is currently in the solved state."""
+        solved_faces = self._create_solved_faces()
+        for face in FACE_NAMES:
+            if not np.array_equal(self.faces[face], solved_faces[face]):
+                return False
         return True
 
-# Example Usage (can be run standalone for testing)
-if __name__ == '__main__':
+    # --- Added Method ---
+    def get_solve_steps(self) -> List[str]:
+        """
+        Calculates the solving steps for the current cube state using the integrated solver.
 
-    # --- Test 3x3 ---
-    print("--- Testing 3x3 ---")
-    my_cube_3x3 = RubiksCube(size=3)
-    print("Initial State (Top Face):\n", my_cube_3x3.state[:, my_cube_3x3.n_max, :])
-    print("Is solved:", my_cube_3x3.is_solved())
+        Returns:
+            A list of move strings (e.g., ['R', 'U', "R'"]) representing the
+            solution, or an empty list if the solver is unavailable or fails.
+        """
+        print("Requesting solve steps...")
+        try:
+            # Get the state in the format the solver expects
+            solver_state = self.get_state_for_solver()
+            # Call the solver function
+            solution = solver.calculate_solve_steps(solver_state)
+            return solution
+        except Exception as e:
+            # Catch potential errors during state generation or solving
+            print(f"Error getting solve steps: {e}")
+            return []
+    # --- End Added Method ---
 
-    print("\nApplying move U...")
-    my_cube_3x3.apply_move('U')
-    print("State after U (Top Face):\n", my_cube_3x3.state[:, my_cube_3x3.n_max, :])
-    print("State after U (Front Face):\n", my_cube_3x3.state[:, :, my_cube_3x3.n_max])
+    def __str__(self) -> str:
+        """Provides a simple text representation of the cube's faces."""
+        output = []
+        indent = " " * (self.size * 2 + 1)
 
-    print("\nApplying move R'...")
-    my_cube_3x3.apply_move("R'")
-    print("State after R' (Right Face):\n", my_cube_3x3.state[my_cube_3x3.n_max, :, :])
+        def format_face(face_char):
+            arr = self.faces[face_char]
+            lines = []
+            for row in arr:
+                lines.append(" ".join(COLOR_MAP_INT_TO_CHAR.get(i, '?') for i in row))
+            return lines
 
-    print("\nScrambling 3x3...")
-    my_cube_3x3.scramble(5)
-    print("Is solved:", my_cube_3x3.is_solved())
+        u_lines = format_face('U')
+        for line in u_lines: output.append(indent + line)
+        output.append("")
 
-    print("\nGetting 3x3 solve steps...")
-    steps = my_cube_3x3.get_solve_steps()
-    print(f"Calculated steps: {steps}")
+        l_lines = format_face('L')
+        f_lines = format_face('F')
+        r_lines = format_face('R')
+        b_lines = format_face('B')
+        for i in range(self.size):
+            output.append(f"{l_lines[i]}  {f_lines[i]}  {r_lines[i]}  {b_lines[i]}")
+        output.append("")
 
-    # --- Test 4x4 ---
-    print("\n\n--- Testing 4x4 ---")
-    my_cube_4x4 = RubiksCube(size=4)
-    print("Initial State (Top Face):\n", my_cube_4x4.state[:, my_cube_4x4.n_max, :])
-    print("Is solved:", my_cube_4x4.is_solved())
+        d_lines = format_face('D')
+        for line in d_lines: output.append(indent + line)
 
-    print("\nApplying move F...")
-    my_cube_4x4.apply_move('F')
-    print("State after F (Front Face):\n", my_cube_4x4.state[:, :, my_cube_4x4.n_max])
-    print("State after F (Top Face):\n", my_cube_4x4.state[:, my_cube_4x4.n_max, :])
-    print("Is solved:", my_cube_4x4.is_solved())
+        return "\n".join(output)
 
-    print("\nScrambling 4x4...")
-    my_cube_4x4.scramble(5)
+    def __repr__(self) -> str:
+        """Representation of the object."""
+        return f"RubiksCube(size={self.size}, state_hash={hash(self.faces_to_string())})"
 
-    print("\nGetting 4x4 solve steps...")
-    steps_4x4 = my_cube_4x4.get_solve_steps() # Should indicate not implemented
-    print(f"Calculated steps: {steps_4x4}")
+    def faces_to_string(self) -> str:
+        """Converts the face state to a single string (useful for hashing/comparison)."""
+        return "".join(self.faces[face].tobytes().hex() for face in FACE_NAMES)
