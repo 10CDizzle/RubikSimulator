@@ -162,18 +162,19 @@ class RubiksCubeViewer:
         if not self._initial_update_done:
             print("\n--- Initial State Received by Viewer ---")
             print(f"Shape: {state_array.shape}")
+            # Use model's size to correctly determine max index for printing slices
+            model_max_index = self.cube_model.size - 1
             # Print slices corresponding to faces for easier reading
-            n = self.cube_model.n
             print("U (Y=n):")
-            print(state_array[:, n, :])
+            print(state_array[:, model_max_index, :])
             print("R (X=n):")
-            print(state_array[n, :, :])
+            print(state_array[model_max_index, :, :])
             print("F (Z=n):")
-            print(state_array[:, :, n])
+            print(state_array[:, :, model_max_index])
             print("D (Y=0):")
             print(state_array[:, 0, :])
             print("L (X=0):")
-            print(state_array[0, :, :])
+            print(state_array[0, :, :]) # Correct, uses 0
             print("B (Z=0):")
             print(state_array[:, :, 0])
             print("----------------------------------------\n")
