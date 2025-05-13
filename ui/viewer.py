@@ -183,17 +183,39 @@ class RubiksCubeViewer:
 
 
             # Check the shape of the retrieved state array
-            expected_shape = (self.cube_model.size, self.cube_model.size, self.cube_model.size)
+            # Each cubie position (x,y,z) should now hold data for its 6 potential faces.
+            # The data could be color indices, with -1 for non-existent faces.
+            expected_shape = (self.cube_model.size, self.cube_model.size, self.cube_model.size, 6)
             if not isinstance(state_array, np.ndarray) or state_array.shape != expected_shape:
                  print(f"Error: get_state_for_solver() returned invalid state. Expected shape {expected_shape}, got {type(state_array)} with shape {getattr(state_array, 'shape', 'N/A')}.", file=sys.stderr)
+                 print("Ensure cube_model.get_state_for_solver() returns a NumPy array where each element [x,y,z] is a tuple/array of 6 color indices (for -X, +X, -Y, +Y, -Z, +Z faces of the cubie at x,y,z).", file=sys.stderr)
                  return
 
             updated_count = 0
             for key, facelet_entity in self.facelets.items():
                 if facelet_entity:
-                    x, y, z, axis, direction = key
+                    x, y, z, face_axis, face_direction = key
                     try:
-                        color_index = state_array[x, y, z]
+                        # state_array[x,y,z] is now a tuple/array of 6 color indices
+                        # Order assumed: (-X, +X, -Y, +Y, -Z, +Z) or (L, R, D, U, B, F)
+                        cubie_face_colors = state_array[x, y, z]
+                        
+                        # Map (face_axis, face_direction) to an index in cubie_face_colors
+                        # (axis=0 (X), dir=-1 (L)) -> index 0
+                        # (axis=0 (X), dir=1  (R)) -> index 1
+                        # (axis=1 (Y), dir=-1 (D)) -> index 2
+                        # (axis=1 (Y), dir=1  (U)) -> index 3
+                        # (axis=2 (Z), dir=-1 (B)) -> index 4
+                        # (axis=2 (Z), dir=1  (F)) -> index 5
+                        if face_axis == 0: # X-axis
+                            tuple_idx = 0 if face_direction == -1 else 1
+                        elif face_axis == 1: # Y-axis
+                            tuple_idx = 2 if face_direction == -1 else 3
+                        else: # Z-axis (face_axis == 2)
+                            tuple_idx = 4 if face_direction == -1 else 5
+                        
+                        color_index = cubie_face_colors[tuple_idx]
+
                         facelet_entity.color = INT_COLOR_MAP.get(color_index, color.pink) # Pink for errors
                         updated_count += 1
                     except IndexError:
