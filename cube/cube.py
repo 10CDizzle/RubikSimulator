@@ -88,52 +88,63 @@ class RubiksCube:
 
     def get_state_for_solver(self) -> np.ndarray:
         """
-        Constructs the 3D numpy array representation from the face data,
-        matching the specific format expected by the Kociemba solver's
-        _convert_state_to_kociemba_string function in solver.py.
+        Constructs a NumPy array representing the cube's state, primarily for the viewer.
+        Each cubie position (x,y,z) stores an array of 6 color indices,
+        corresponding to its potential faces in the order: -X(L), +X(R), -Y(D), +Y(U), -Z(B), +Z(F).
+        Non-existent faces (e.g., for center or internal pieces) are marked with -1.
+
+        Note: This method's output format (size, size, size, 6) is for the RubiksCubeViewer.
+        The Kociemba solver (used in `get_solve_steps`) might expect a different format
+        (e.g., the older 3x3x3 single-color-per-cubie-position array).
+        If so, the `get_solve_steps` method or the solver interface might need adjustment
+        to convert this 6D state or use a dedicated state-fetching method for the solver.
 
         Returns:
-            A 3x3x3 NumPy array representing the cube state for the solver.
+            A (size, size, size, 6) NumPy array representing the detailed cube state.
 
         Raises:
             ValueError: If the cube size is not 3x3x3.
         """
         if self.size != 3:
-             raise ValueError("Solver state generation only supported for 3x3x3 cubes.")
+            # The indexing logic below is specific to how faces map to cubie coordinates.
+            # While adaptable, it's currently set for 3x3.
+            raise ValueError("This state representation method is currently tailored for 3x3x3 cubes.")
 
-        state_3d = np.full((self.size, self.size, self.size), -1, dtype=int)
+        # Initialize with -1 (indicator for non-existent/internal facelet)
+        # Shape: (size, size, size, 6) for (x, y, z, face_orientation)
+        # Face orientation order for the last dimension (index):
+        # 0: -X (Left), 1: +X (Right), 2: -Y (Down), 3: +Y (Up), 4: -Z (Back), 5: +Z (Front)
+        state_6d = np.full((self.size, self.size, self.size, 6), -1, dtype=int)
         n = self.n
 
-        # --- Map Facelets ---
-        # U Face (Y=n)
-        for x in range(self.size):
-            for z in range(self.size):
-                state_3d[x, n, z] = self.faces['U'][z, x]
-        # R Face (X=n)
-        for y in range(self.size):
-            for z in range(self.size):
-                state_3d[n, y, z] = self.faces['R'][n - y, z]
-        # F Face (Z=n)
-        for x in range(self.size):
-            for y in range(self.size):
-                state_3d[x, y, n] = self.faces['F'][n - y, x]
-        # D Face (Y=0)
-        for x in range(self.size):
-            for z in range(self.size):
-                state_3d[x, 0, z] = self.faces['D'][n - z, x]
-        # L Face (X=0)
-        for y in range(self.size):
-            for z in range(self.size):
-                state_3d[0, y, z] = self.faces['L'][n - y, n - z]
-        # B Face (Z=0)
-        for x in range(self.size):
-            for y in range(self.size):
-                state_3d[x, y, 0] = self.faces['B'][n - y, n - x]
+        for x_cubie in range(self.size):
+            for y_cubie in range(self.size):
+                for z_cubie in range(self.size):
+                    # -X face (Left, index 0)
+                    if x_cubie == 0:
+                        state_6d[x_cubie, y_cubie, z_cubie, 0] = self.faces['L'][n - y_cubie, n - z_cubie]
 
-        if np.any(state_3d == -1):
-             print("Warning: Some positions in the solver state array were not assigned.")
+                    # +X face (Right, index 1)
+                    if x_cubie == n:
+                        state_6d[x_cubie, y_cubie, z_cubie, 1] = self.faces['R'][n - y_cubie, z_cubie]
 
-        return state_3d
+                    # -Y face (Down, index 2)
+                    if y_cubie == 0:
+                        state_6d[x_cubie, y_cubie, z_cubie, 2] = self.faces['D'][n - z_cubie, x_cubie]
+
+                    # +Y face (Up, index 3)
+                    if y_cubie == n:
+                        state_6d[x_cubie, y_cubie, z_cubie, 3] = self.faces['U'][z_cubie, x_cubie]
+
+                    # -Z face (Back, index 4)
+                    if z_cubie == 0:
+                        state_6d[x_cubie, y_cubie, z_cubie, 4] = self.faces['B'][n - y_cubie, n - x_cubie]
+
+                    # +Z face (Front, index 5)
+                    if z_cubie == n:
+                        state_6d[x_cubie, y_cubie, z_cubie, 5] = self.faces['F'][n - y_cubie, x_cubie]
+
+        return state_6d
 
     def apply_move(self, move_str: str) -> None:
         """
