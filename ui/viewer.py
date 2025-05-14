@@ -273,36 +273,35 @@ class RubiksCubeViewer:
 
         angle = 90 * direction * turns
 
-        # --- Determine Axis, Slice, and Rotation Vector ---
-        axis_map = {'U': (0, 1, 0), 'D': (0, -1, 0), 'L': (-1, 0, 0),
-                    'R': (1, 0, 0), 'F': (0, 0, 1), 'B': (0, 0, -1)}
+        # --- Determine Axis and Slice ---
         slice_info = { # Map face char to (axis_index, slice_index)
             'U': (1, n), 'D': (1, 0),
             'L': (0, 0), 'R': (0, n),
             'F': (2, n), 'B': (2, 0)
         }
-
         if face_char not in slice_info:
             print(f"Error: Could not determine slice for face '{face_char}'.", file=sys.stderr)
             return
 
         axis_index, slice_index = slice_info[face_char]
-        rotation_axis = axis_map[face_char] # Use the normal vector of the face for rotation axis
 
         # --- Identify Pieces in the Slice ---
-        pieces_to_move = []
+        selected_entities = set() # Use a set to automatically handle duplicates
+
         # Find backing pieces in the slice
         for coords, piece_entity in self.backing_pieces.items():
+            # coords is (logical_x, logical_y, logical_z)
             if coords[axis_index] == slice_index:
-                pieces_to_move.append(piece_entity)
+                selected_entities.add(piece_entity)
 
         # Find facelets in the slice
         for key, facelet_entity in self.facelets.items():
-            x, y, z, _, _ = key
-            if (axis_index == 0 and x == slice_index) or \
-               (axis_index == 1 and y == slice_index) or \
-               (axis_index == 2 and z == slice_index):
-                pieces_to_move.append(facelet_entity)
+            # key is (logical_x, logical_y, logical_z, face_axis, face_direction)
+            cubie_logical_coords = key[:3] # Extract (x,y,z)
+            if cubie_logical_coords[axis_index] == slice_index:
+                selected_entities.add(facelet_entity)
+        
+        pieces_to_move = list(selected_entities)
 
         if not pieces_to_move:
             print(f"Warning: No pieces found for move '{move}' (axis={axis_index}, slice={slice_index}).", file=sys.stderr)
@@ -310,32 +309,39 @@ class RubiksCubeViewer:
 
         # --- Perform Animation ---
         self.is_animating = True
-        pivot = Entity(parent=self.parent_entity, name=f"pivot_{move}", world_rotation=(0,0,0))
+        # Pivot is created at the parent's origin with no initial rotation relative to the parent.
+        pivot = Entity(parent=self.parent_entity, name=f"pivot_{move}", position=(0,0,0), rotation=(0,0,0))
 
         # Parent pieces to the pivot
         for p in pieces_to_move:
-            p.world_parent = pivot
+            p.world_parent = pivot # Preserves world orientation while re-parenting
 
-        # Animate the pivot: Calculate the target rotation vector
-        # Target rotation is the axis scaled by the angle. Ensure axis is Vec3.
-        target_rotation = pivot.rotation + Vec3(rotation_axis) * angle
-        anim = pivot.animate_rotation(target_rotation, duration=duration, curve=curve.linear)
+        # Determine the actual animation angle for the pivot's local axis.
+        # Positive angle for U, R, F faces (rotating around +Y, +X, +Z respectively).
+        # Negative angle for D, L, B faces (effectively rotating CW around -Y, -X, -Z,
+        # which is CCW around +Y, +X, +Z using the pivot's local axes).
+        actual_animation_angle = angle
+        if face_char in ('D', 'L', 'B'):
+            actual_animation_angle = -angle
+
+        # Animate the pivot's local rotation on the correct axis
+        if face_char in ('U', 'D'): # Y-axis
+            pivot.animate_rotation_y(actual_animation_angle, duration=duration, curve=curve.linear)
+        elif face_char in ('L', 'R'): # X-axis
+            pivot.animate_rotation_x(actual_animation_angle, duration=duration, curve=curve.linear)
+        elif face_char in ('F', 'B'): # Z-axis
+            pivot.animate_rotation_z(actual_animation_angle, duration=duration, curve=curve.linear)
         
         # Schedule cleanup after animation
-        # Pass the calculated target_rotation to the finish function
-        invoke(self._finish_animation, pivot, pieces_to_move, target_rotation, delay=duration + 0.01) # Small buffer
+        invoke(self._finish_animation, pivot, pieces_to_move, delay=duration + 0.01) # Small buffer
 
-    def _finish_animation(self, pivot: Entity, moved_pieces: list, target_rotation: Vec3):
+    def _finish_animation(self, pivot: Entity, moved_pieces: list):
         """Helper function called after animation completes."""
-        # --- Snap to Grid ---
-        # Calculate the final rotation rounded to the nearest 90 degrees
-        snapped_x = round(target_rotation.x / 90) * 90
-        snapped_y = round(target_rotation.y / 90) * 90
-        snapped_z = round(target_rotation.z / 90) * 90
-        snapped_rotation = Vec3(snapped_x, snapped_y, snapped_z)
-        
-        # Apply the exact snapped rotation to the pivot *before* unparenting
-        pivot.rotation = snapped_rotation
+        # Snap pivot's local rotation to nearest 90 degrees.
+        # This ensures that after animation, the pivot is perfectly aligned before re-parenting.
+        pivot.rotation_x = round(pivot.rotation_x / 90) * 90
+        pivot.rotation_y = round(pivot.rotation_y / 90) * 90
+        pivot.rotation_z = round(pivot.rotation_z / 90) * 90
         
         # Unparent pieces back to the main cube parent
         for p in moved_pieces:
@@ -343,7 +349,7 @@ class RubiksCubeViewer:
             # Optional: Round individual piece rotations if needed after complex sequences,
             # but inheriting the snapped pivot rotation should be sufficient.
             # p.rotation_x = round(p.rotation_x / 90) * 90
-            # p.rotation_y = round(p.rotation_y / 90) * 90
+            # p.rotation_y = round(p.rotation_y / 90) * 90 # Example
             # p.rotation_z = round(p.rotation_z / 90) * 90
             
         destroy(pivot)
