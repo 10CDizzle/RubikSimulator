@@ -245,6 +245,8 @@ class RubiksCubeViewer:
             print("Warning: Animation already in progress. Move ignored.", file=sys.stderr)
             return
 
+        print(f"[DEBUG] animate_move START for '{move}'. Parent entity world_rotation: {self.parent_entity.world_rotation}, world_position: {self.parent_entity.world_position}")
+
         if not move:
             return
 
@@ -316,42 +318,58 @@ class RubiksCubeViewer:
         for p in pieces_to_move:
             p.world_parent = pivot # Preserves world orientation while re-parenting
 
-        # Determine the actual animation angle for the pivot's local axis.
-        # Positive angle for U, R, F faces (rotating around +Y, +X, +Z respectively).
-        # Negative angle for D, L, B faces (effectively rotating CW around -Y, -X, -Z,
-        # which is CCW around +Y, +X, +Z using the pivot's local axes).
-        actual_animation_angle = angle
-        if face_char in ('D', 'L', 'B'):
-            actual_animation_angle = -angle
+        # Ursina's positive rotation is Counter-Clockwise.
+        # 'angle' is calculated such that:
+        #   - CW moves (U, R, F, D, L, B) have angle = +90 or +180.
+        #   - CCW moves (U', R', F', D', L', B') have angle = -90 or -180.
+        # To get the desired visual rotation with Ursina, we invert 'angle'.
+        ursina_animation_angle = -angle
 
         # Animate the pivot's local rotation on the correct axis
         if face_char in ('U', 'D'): # Y-axis
-            pivot.animate_rotation_y(actual_animation_angle, duration=duration, curve=curve.linear)
+            pivot.animate_rotation_y(ursina_animation_angle, duration=duration, curve=curve.linear)
         elif face_char in ('L', 'R'): # X-axis
-            pivot.animate_rotation_x(actual_animation_angle, duration=duration, curve=curve.linear)
+            pivot.animate_rotation_x(ursina_animation_angle, duration=duration, curve=curve.linear)
         elif face_char in ('F', 'B'): # Z-axis
-            pivot.animate_rotation_z(actual_animation_angle, duration=duration, curve=curve.linear)
+            pivot.animate_rotation_z(ursina_animation_angle, duration=duration, curve=curve.linear)
         
         # Schedule cleanup after animation
         invoke(self._finish_animation, pivot, pieces_to_move, delay=duration + 0.01) # Small buffer
 
     def _finish_animation(self, pivot: Entity, moved_pieces: list):
         """Helper function called after animation completes."""
+        # Re-enabled diagnostic print for parent entity's rotation
+        print(f"[DEBUG] _finish_animation START. Parent entity world_rotation: {self.parent_entity.world_rotation}, world_position: {self.parent_entity.world_position}")
+
         # Snap pivot's local rotation to nearest 90 degrees.
         # This ensures that after animation, the pivot is perfectly aligned before re-parenting.
         pivot.rotation_x = round(pivot.rotation_x / 90) * 90
         pivot.rotation_y = round(pivot.rotation_y / 90) * 90
         pivot.rotation_z = round(pivot.rotation_z / 90) * 90
         
-        # Unparent pieces back to the main cube parent
+        # Store the final world transforms of the pieces while they are children of the snapped pivot.
+        # At this point, their world_transform is what we want it to be.
+        final_world_transforms = {piece: piece.world_transform for piece in moved_pieces}
+
+        # Change parent back to the main cube parent.
+        # Using world_parent should preserve their world transforms.
         for p in moved_pieces:
-            p.world_parent = self.parent_entity
-            # Optional: Round individual piece rotations if needed after complex sequences,
-            # but inheriting the snapped pivot rotation should be sufficient.
-            # p.rotation_x = round(p.rotation_x / 90) * 90
-            # p.rotation_y = round(p.rotation_y / 90) * 90 # Example
-            # p.rotation_z = round(p.rotation_z / 90) * 90
+            p.world_parent = self.parent_entity # This attempts to keep p.world_transform constant
             
-        destroy(pivot)
+        destroy(pivot) # Destroy the pivot now that pieces are no longer its children.
+
+        # Re-assert the world_transform for each moved piece.
+        # This is a belt-and-suspenders approach: world_parent should have placed them correctly
+        # in world space, but this explicitly enforces their final calculated world state.
+        # final state in world space. Ursina will update their local transforms accordingly.
+        for p in moved_pieces:
+            p.world_transform = final_world_transforms[p]
+            # Snap local rotation of the piece to the nearest 90-degree increment.
+            # This helps clean up any floating-point inaccuracies after world_transform is set
+            # and local transforms are derived, especially since parent_entity is axis-aligned.
+            p.rotation_x = round(p.rotation_x / 90) * 90
+            p.rotation_y = round(p.rotation_y / 90) * 90
+            p.rotation_z = round(p.rotation_z / 90) * 90
+            
         self.is_animating = False
-        # print("Animation finished.") # Optional debug print
+        print(f"[DEBUG] _finish_animation END. Parent entity world_rotation: {self.parent_entity.world_rotation}, world_position: {self.parent_entity.world_position}. Move completed.")

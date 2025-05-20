@@ -220,52 +220,58 @@ class RubiksCube:
         for _ in range(rot_count_sides): # Apply CW cycle 'rot_count_sides' times
             if face_char == 'U': # CW Cycle: F[0,:] -> R[0,:] -> B[0,:] -> L[0,:] -> F[0,:]
                 temp = self.faces['F'][0, :].copy()
-                self.faces['F'][0, :] = self.faces['L'][0, :]
-                self.faces['L'][0, :] = self.faces['B'][0, :]
-                self.faces['B'][0, :] = self.faces['R'][0, :]
-                self.faces['R'][0, :] = temp
+                self.faces['F'][0, :] = self.faces['L'][0, :] # L top row -> F top row
+                self.faces['L'][0, :] = self.faces['B'][0, :] # B top row -> L top row
+                self.faces['B'][0, :] = self.faces['R'][0, :] # R top row -> B top row
+                self.faces['R'][0, :] = temp # F original top row -> R top row
             elif face_char == 'D': # CW Cycle: F[n,:] -> L[n,:] -> B[n,:] -> R[n,:] -> F[n,:]
                 temp = self.faces['F'][n, :].copy()
-                self.faces['F'][n, :] = self.faces['R'][n, :]
-                self.faces['R'][n, :] = self.faces['B'][n, :]
-                self.faces['B'][n, :] = self.faces['L'][n, :]
-                self.faces['L'][n, :] = temp
-            elif face_char == 'L': # CW Cycle: U[:,0] -> B[::-1,n] -> D[:,0] -> F[:,0] -> U[:,0]
-                # U left col -> F left col -> D left col -> B left col (reversed) -> U left col
+                self.faces['F'][n, :] = self.faces['R'][n, :] # R bottom row -> F bottom row
+                self.faces['R'][n, :] = self.faces['B'][n, :] # B bottom row -> R bottom row
+                self.faces['B'][n, :] = self.faces['L'][n, :] # L bottom row -> B bottom row
+                self.faces['L'][n, :] = temp # F original bottom row -> L bottom row
+            elif face_char == 'L': # CW Cycle: U[:,0] -> F[:,0] -> D[:,0] -> B[:,n] -> U[:,0]
+                # U's left column moves to F's left column.
+                # F's left column moves to D's left column.
+                # D's left column moves to B's rightmost column (B[:,n], which is the X=0 slice).
+                # B's rightmost column moves to U's left column.
                 temp = self.faces['U'][:, 0].copy()
                 self.faces['U'][:, 0] = self.faces['F'][:, 0]
                 self.faces['F'][:, 0] = self.faces['D'][:, 0]
-                # B face: [n-y, n-x]. Col n means n-x=n -> x=0 (Left col relative to B view)
-                self.faces['D'][:, 0] = self.faces['B'][::-1, n]
-                self.faces['B'][::-1, n] = temp
-            elif face_char == 'R': # CW Cycle: U[:,n] -> F[:,n] -> D[:,n] -> B[::-1,0] -> U[:,n]
-                # U right col -> B right col (reversed) -> D right col -> F right col -> U right col
+                self.faces['D'][:, 0] = self.faces['B'][:, n] # B right col -> D left col
+                self.faces['B'][:, n] = temp # U original left col -> B right col
+            elif face_char == 'R': # CW Cycle: U[:,n] -> B[:,0] -> D[:,n] -> F[:,n] -> U[:,n]
+                # U's right column moves to B's leftmost column (B[:,0], which is the X=n slice).
+                # B's leftmost column moves to D's right column.
+                # D's right column moves to F's right column.
+                # F's right column moves to U's right column.
                 temp = self.faces['U'][:, n].copy()
-                # B face: [n-y, n-x]. Col 0 means n-x=0 -> x=n (Right col relative to B view)
-                self.faces['U'][:, n] = self.faces['B'][::-1, 0]
-                self.faces['B'][::-1, 0] = self.faces['D'][:, n]
+                self.faces['U'][:, n] = self.faces['B'][:, 0]
+                self.faces['B'][:, 0] = self.faces['D'][:, n]
                 self.faces['D'][:, n] = self.faces['F'][:, n]
                 self.faces['F'][:, n] = temp
-            elif face_char == 'F': # CW Cycle: U[n,:] -> R[:,0] -> D[0,::-1] -> L[::-1,0] -> U[n,:]
-                # U bottom row -> R back col -> D front row (reversed) -> L front col (reversed) -> U bottom row
+            elif face_char == 'F': # CW Cycle: U[n,:] -> R[:,0] -> D[0,:] -> L[:,n] -> U[n,:]
+                # U's bottom row (U[n,:]) moves to R's leftmost column (R[:,0]).
+                # R's leftmost column (R[:,0]) moves to D's top row (D[0,:]).
+                # D's top row (D[0,:]) moves to L's rightmost column (L[:,n]).
+                # L's rightmost column (L[:,n]) moves to U's bottom row (U[n,:]).
+                # Reversals are needed due to orientation changes.
                 temp = self.faces['U'][n, :].copy()
-                # L face: [n-y, n-z]. Col 0 means n-z=0 -> z=n (Front col relative to L view)
-                self.faces['U'][n, :] = self.faces['L'][::-1, 0]
-                # D face: [n-z, x]. Row 0 means n-z=0 -> z=n (Front row relative to D view)
-                self.faces['L'][:, 0] = self.faces['D'][0, ::-1]
-                # R face: [n-y, z]. Col 0 means z=0 (Back col relative to R view)
-                self.faces['D'][0, :] = self.faces['R'][:, 0]
+                self.faces['U'][n, :] = self.faces['L'][::-1, n]
+                self.faces['L'][:, n] = self.faces['D'][0, ::-1]
+                self.faces['D'][0, :] = self.faces['R'][::-1, 0]
                 self.faces['R'][:, 0] = temp
-            elif face_char == 'B': # CW Cycle: U[0,:] -> L[::-1,n] -> D[n,:] -> R[:,n] -> U[0,:]
-                # U top row -> R front col -> D back row (reversed) -> L back col (reversed) -> U top row
+            elif face_char == 'B': # CW Cycle: U[0,:] -> L[:,0] -> D[n,:] -> R[:,n] -> U[0,:]
+                # U's top row (U[0,:]) moves to L's leftmost column (L[:,0]).
+                # L's leftmost column (L[:,0]) moves to D's bottom row (D[n,:]).
+                # D's bottom row (D[n,:]) moves to R's rightmost column (R[:,n]).
+                # R's rightmost column (R[:,n]) moves to U's top row (U[0,:]).
+                # Reversals are needed due to orientation changes.
                 temp = self.faces['U'][0, :].copy()
-                # R face: [n-y, z]. Col n means z=n (Front col relative to R view)
-                self.faces['U'][0, :] = self.faces['R'][:, n]
-                # D face: [n-z, x]. Row n means n-z=n -> z=0 (Back row relative to D view)
+                self.faces['U'][0, :] = self.faces['R'][::-1, n]
                 self.faces['R'][:, n] = self.faces['D'][n, ::-1]
-                # L face: [n-y, n-z]. Col n means n-z=n -> z=0 (Back col relative to L view)
-                self.faces['D'][n, :] = self.faces['L'][::-1, n]
-                self.faces['L'][:, n] = temp[::-1] # Reverse U top row going to L back col
+                self.faces['D'][n, :] = self.faces['L'][::-1, 0]
+                self.faces['L'][:, 0] = temp
 
 
     def scramble(self, num_moves: int = 25, seed: Optional[int] = None) -> str:
