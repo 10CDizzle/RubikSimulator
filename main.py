@@ -1,5 +1,5 @@
 # c:\Users\Chris\Documents\GitHub\RubikSimulator\main.py
-from ursina import Ursina, invoke, camera, print_on_screen, held_keys, mouse
+from ursina import Ursina, invoke, camera, print_on_screen, held_keys, mouse, destroy, Text
 import sys, math
 import os
 
@@ -22,16 +22,21 @@ except ImportError as e:
 # --- Application Setup ---
 app = Ursina(title="Rubik's Cube Simulator")
 
+# --- Cube Size Configuration ---
+MIN_CUBE_SIZE = 2
+MAX_CUBE_SIZE = 7 # Adjust as needed, larger cubes can impact performance
+current_cube_size = 3
+
 # --- Model and Viewer Initialization ---
 try:
-    cube_model = RubiksCube(size=3)
+    cube_model = RubiksCube(size=current_cube_size)
     viewer = RubiksCubeViewer(cube_model)
 except Exception as e:
     print(f"Error initializing cube model or viewer: {e}", file=sys.stderr)
     sys.exit(1)
 
 # --- Initial State (Optional Scramble) ---
-print("Applying initial scramble...")
+# print("Applying initial scramble...")
 # scramble_seq = cube_model.scramble(20) # Apply scramble to model
 # print(f"Scramble Applied: {scramble_seq}")
 # viewer.update_colors() # Update viewer to match scrambled state
@@ -95,13 +100,21 @@ def apply_sequence(sequence_str: str):
     process_next_move() # Start the first move
 
 # --- Input Handling ---
-instruction_text = print_on_screen(
-    "Keys: U, D, L, R, F, B | Shift: Inverse (') | Ctrl: Double (2)\n"
-    "S: Solve | X: Example Seq | C: Scramble | Esc: Quit",
-    position=(-0.85, 0.48),
-    scale=0.9,
-    origin=(-0.5, 0.5) # Align text top-left
-)
+instruction_text_entity = Text(origin=(-0.5, 0.5), position=(-0.85, 0.48), scale=0.9)
+
+def _update_instruction_text():
+    """Updates the on-screen instruction text with current cube size."""
+    global instruction_text_entity, current_cube_size
+    text_content = (
+        f"Size: {current_cube_size}x{current_cube_size}x{current_cube_size} (INS/DEL to change)\n"
+        "Keys: U, D, L, R, F, B | Shift: Inverse (') | Ctrl: Double (2)\n"
+        "S: Solve (3x3 only) | X: Example Seq | C: Scramble | Esc: Quit"
+    )
+    if instruction_text_entity:
+        instruction_text_entity.text = text_content
+    else: # Should not happen after init, but as a fallback
+        print("Error: instruction_text_entity not initialized.")
+
 
 def input(key):
     """Handles keyboard input for cube manipulation and other actions."""
@@ -112,8 +125,17 @@ def input(key):
         quit()
 
     # Ignore input if an animation sequence is currently running
+    # or if cube size change is happening (though size change itself checks this)
     if viewer.is_animating or is_processing_moves:
         print(f"Input '{key}' ignored: Animation/Processing in progress.")
+        return
+
+    # Handle cube size changes
+    if key == 'insert':
+        _attempt_change_cube_size(current_cube_size + 1)
+        return
+    if key == 'delete':
+        _attempt_change_cube_size(current_cube_size - 1)
         return
 
     move = None
@@ -135,32 +157,79 @@ def input(key):
         else:
             move = face
     elif key == 's': # Solve
-        if not cube_model.is_solved():
+        if not cube_model.is_solved(): # Check if already solved
             print("Requesting solve steps...")
-            solution = cube_model.get_solve_steps()
-            if solution:
-                print(f"Solver returned {len(solution)} moves.")
-                apply_sequence(" ".join(solution))
+            solution = cube_model.get_solve_steps() # This now checks for 3x3 internally
+            if solution: # Will be empty if not 3x3 or if solver fails
+                if cube_model.size == 3: # Only apply if it's a 3x3
+                    print(f"Solver returned {len(solution)} moves for 3x3 cube.")
+                    apply_sequence(" ".join(solution))
+                # Message for non-3x3 is handled in cube_model.get_solve_steps
             else:
-                print("Solver failed or returned no steps.")
+                if cube_model.size == 3: # Only print "failed" if it was a 3x3 attempt
+                    print("Solver failed or returned no steps for 3x3 cube.")
         else:
             print("Cube already solved.")
-        return # Don't treat 's' as a move to apply immediately
+        return
     elif key == 'x': # Example Sequence (e.g., Sexy Move)
-        apply_sequence("R U R' U R U2 R'")
+        apply_sequence("R U R' U R U2 R'") # This sequence is generic
         return
     elif key == 'c': # Scramble
         print("Scrambling...")
-        scramble_seq = cube_model.scramble(20) # Apply scramble to model directly
+        # Scramble logic is now more robust for NxN in cube_model
+        scramble_seq = cube_model.scramble(num_moves=max(5, current_cube_size * 7)) # More moves for bigger cubes
         print(f"Applied Scramble: {scramble_seq}")
         viewer.update_colors() # Update viewer instantly after scramble
         print("Scramble complete. Logical State:")
         print(cube_model)
-        return # Scramble is instant, no animation sequence needed here
+        return
 
-    # If a valid move was generated, apply it using the sequence processor
     if move:
         apply_sequence(move)
+
+def _attempt_change_cube_size(new_size: int):
+    """
+    Attempts to change the cube size.
+    Re-initializes the cube model and viewer.
+    """
+    global cube_model, viewer, current_cube_size, is_processing_moves
+
+    if viewer.is_animating or is_processing_moves:
+        print("Cannot change cube size: Animation/Processing in progress.")
+        return
+
+    if not (MIN_CUBE_SIZE <= new_size <= MAX_CUBE_SIZE):
+        print(f"Cannot change size: {new_size}x{new_size}x{new_size} is out of allowed range ({MIN_CUBE_SIZE}-{MAX_CUBE_SIZE}).")
+        return
+
+    print(f"Changing cube size from {current_cube_size}x{current_cube_size}x{current_cube_size} to {new_size}x{new_size}x{new_size}...")
+
+    # Destroy the old viewer's Ursina entities
+    if viewer and hasattr(viewer, 'parent_entity') and viewer.parent_entity:
+        destroy(viewer.parent_entity)
+    elif viewer and isinstance(viewer, Ursina.Entity): # If viewer itself is the main entity
+        destroy(viewer)
+
+
+    current_cube_size = new_size
+    try:
+        cube_model = RubiksCube(size=current_cube_size) # Create new logical model
+        viewer = RubiksCubeViewer(cube_model)           # Create new visual representation
+    except Exception as e:
+        print(f"CRITICAL ERROR re-initializing cube/viewer for size {new_size}: {e}", file=sys.stderr)
+        # Attempt to revert or handle gracefully
+        print("Attempting to revert to previous size or a default size...")
+        # For simplicity, exiting here, but a real app might try to recover
+        # current_cube_size = 3 # or previous_valid_size
+        # cube_model = RubiksCube(size=current_cube_size)
+        # viewer = RubiksCubeViewer(cube_model)
+        sys.exit(f"Failed to re-initialize cube for size {new_size}. Exiting.")
+
+
+    camera.look_at(viewer.parent_entity if hasattr(viewer, 'parent_entity') else viewer) # Re-target camera
+    _update_instruction_text() # Update UI
+    print(f"Cube size changed to {current_cube_size}x{current_cube_size}x{current_cube_size}.")
+
 
 def update():
     """Ursina update function, called every frame."""
@@ -172,10 +241,13 @@ def update():
         # Rotate the parent entity based on mouse movement
         # Adjust sensitivity as needed
         sensitivity = 150
-        viewer.parent_entity.rotation_y += mouse.delta[0] * sensitivity
-        viewer.parent_entity.rotation_x -= mouse.delta[1] * sensitivity
+        target_entity = viewer.parent_entity if hasattr(viewer, 'parent_entity') else viewer
+        if target_entity:
+            target_entity.rotation_y += mouse.delta[0] * sensitivity
+            target_entity.rotation_x -= mouse.delta[1] * sensitivity
 
 # --- Run Application ---
 if __name__ == '__main__':
     print("Starting Rubik's Cube Simulator...")
+    _update_instruction_text() # Initial call to set the instruction text
     app.run()

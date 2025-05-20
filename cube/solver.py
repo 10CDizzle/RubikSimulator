@@ -24,115 +24,73 @@ COLOR_MAP = {
     5: 'B'
 }
 
-# In solver.py
+# The global 'n' is no longer needed here as the conversion logic has changed.
+# n = 2 # Max index for 3x3x3
 
-# Ensure this map is correct and matches cube.py init:
-# 0:U (White, Y=n), 1:D (Yellow, Y=0), 2:L (Orange, X=0),
-# 3:R (Red, X=n),   4:F (Green, Z=n),  5:B (Blue, Z=0)
-COLOR_MAP = {
-    0: 'U', 1: 'D', 2: 'L', 3: 'R', 4: 'F', 5: 'B'
-}
-
-def _convert_state_to_kociemba_string(state):
+def _convert_state_to_kociemba_string(cube_faces: dict[str, np.ndarray]) -> str:
     """
-    Converts the 3D numpy array state representation into the specific
-    facelet string format required by the 'kociemba' library.
-    (Corrected logic based on debug output analysis)
-    """
-    if state.shape != (3, 3, 3):
-        raise ValueError(f"Kociemba solver only supports 3x3x3 cubes. Input shape was {state.shape}")
+    Converts the cube's face dictionary (from RubiksCube.faces)
+    into the facelet string format required by the 'kociemba' library.
+    This function is specific to 3x3x3 cubes.
 
-    n = 2 # Max index for 3x3x3
+    Args:
+        cube_faces: A dictionary where keys are face names ('U', 'R', 'F', 'D', 'L', 'B')
+                    and values are 3x3 NumPy arrays of color indices.
+
+    Returns:
+        A 54-character string for the Kociemba solver.
+
+    Raises:
+        ValueError: If faces are missing, not 3x3, or Kociemba string is not 54 chars.
+        KeyError: If an invalid color index is encountered.
+        TypeError: If input types are incorrect.
+    """
+    if not isinstance(cube_faces, dict):
+        raise TypeError(f"Expected cube_faces to be a dict, got {type(cube_faces)}")
 
     # Kociemba order: URFDLB
-    # Map Kociemba facelet indices (1-9) directly to state[x, y, z] coordinates.
-    # Based on cube.py: X=L/R, Y=D/U, Z=B/F
+    kociemba_face_order = ['U', 'R', 'F', 'D', 'L', 'B']
+    all_facelets_chars = []
 
-    try:
-        # U Face (Y=n=2): View from top. Rows along Z (0,1,2), Cols along X (0,1,2).
-        # Kociemba U1..U9: state[0,n,0], state[1,n,0], state[2,n,0], state[0,n,1]...
-        u_facelets = [
-            state[0, n, 0], state[1, n, 0], state[2, n, 0], # U1-3 (Back row, L->R)
-            state[0, n, 1], state[1, n, 1], state[2, n, 1], # U4-6 (Middle row, L->R)
-            state[0, n, 2], state[1, n, 2], state[2, n, 2]  # U7-9 (Front row, L->R)
-        ] # This mapping seems logically correct, the error might be elsewhere if this still fails.
+    for face_char in kociemba_face_order:
+        if face_char not in cube_faces:
+            raise ValueError(f"Missing face '{face_char}' in input for Kociemba conversion.")
+        
+        face_array = cube_faces[face_char]
+        
+        if not isinstance(face_array, np.ndarray):
+            raise TypeError(f"Face '{face_char}' is not a NumPy array, got {type(face_array)}")
+        if face_array.shape != (3, 3):
+            raise ValueError(f"Kociemba solver only supports 3x3x3 cubes. Face '{face_char}' had shape {face_array.shape}, expected (3,3).")
 
-        # R Face (X=n=2): View from right. Rows along Y (2,1,0), Cols along Z (0,1,2).
-        # Kociemba R1..R9: state[n,2,0], state[n,2,1], state[n,2,2], state[n,1,0]...
-        r_facelets = [
-            state[n, 2, 0], state[n, 2, 1], state[n, 2, 2], # R1-3 (Top row, B->F)
-            state[n, 1, 0], state[n, 1, 1], state[n, 1, 2], # R4-6 (Middle row, B->F)
-            state[n, 0, 0], state[n, 0, 1], state[n, 0, 2]  # R7-9 (Bottom row, B->F)
-        ] # This mapping also seems logically correct.
-
-        # F Face (Z=n=2): View from front. Rows along Y (2,1,0), Cols along X (0,1,2).
-        # Kociemba F1..F9: state[0,2,n], state[1,2,n], state[2,2,n], state[0,1,n]...
-        f_facelets = [
-            state[0, 2, n], state[1, 2, n], state[2, 2, n], # F1-3 (Top row, L->R)
-            state[0, 1, n], state[1, 1, n], state[2, 1, n], # F4-6 (Middle row, L->R)
-            state[0, 0, n], state[1, 0, n], state[2, 0, n]  # F7-9 (Bottom row, L->R)
-        ] # Correct based on debug output.
-
-        # D Face (Y=0): View from bottom. Rows along Z (2,1,0), Cols along X (0,1,2).
-        # Kociemba D1..D9: state[0,0,2], state[1,0,2], state[2,0,2], state[0,0,1]...
-        d_facelets = [
-            state[0, 0, 2], state[1, 0, 2], state[2, 0, 2], # D1-3 (Front row, L->R)
-            state[0, 0, 1], state[1, 0, 1], state[2, 0, 1], # D4-6 (Middle row, L->R)
-            state[0, 0, 0], state[1, 0, 0], state[2, 0, 0]  # D7-9 (Back row, L->R)
-        ] # This mapping seems logically correct.
-
-        # L Face (X=0): View from left. Rows along Y (2,1,0), Cols along Z (2,1,0).
-        # Kociemba L1..L9: state[0,2,2], state[0,2,1], state[0,2,0], state[0,1,2]...
-        l_facelets = [
-            state[0, 2, 2], state[0, 2, 1], state[0, 2, 0], # L1-3 (Top row, F->B)
-            state[0, 1, 2], state[0, 1, 1], state[0, 1, 0], # L4-6 (Middle row, F->B)
-            state[0, 0, 2], state[0, 0, 1], state[0, 0, 0]  # L7-9 (Bottom row, F->B)
-        ] # This mapping seems logically correct.
-
-        # B Face (Z=0): View from back. Rows along Y (2,1,0), Cols along X (2,1,0).
-        # Kociemba B1..B9: state[2,2,0], state[1,2,0], state[0,2,0], state[2,1,0]...
-        b_facelets = [
-            state[2, 2, 0], state[1, 2, 0], state[0, 2, 0], # B1-3 (Top row, R->L)
-            state[2, 1, 0], state[1, 1, 0], state[0, 1, 0], # B4-6 (Middle row, R->L)
-            state[2, 0, 0], state[1, 0, 0], state[0, 0, 0]  # B7-9 (Bottom row, R->L)
-        ] # Correct based on debug output.
-
-        # --- Re-enable DEBUGGING if needed ---
-        print("DEBUG U:", [COLOR_MAP[c] for c in u_facelets])
-        print("DEBUG R:", [COLOR_MAP[c] for c in r_facelets])
-        print("DEBUG F:", [COLOR_MAP[c] for c in f_facelets])
-        print("DEBUG D:", [COLOR_MAP[c] for c in d_facelets])
-        print("DEBUG L:", [COLOR_MAP[c] for c in l_facelets])
-        print("DEBUG B:", [COLOR_MAP[c] for c in b_facelets])
-        # --- End Debugging ---
-
-        # Combine facelets in URFDLB order
-        all_facelets = u_facelets + r_facelets + f_facelets + d_facelets + l_facelets + b_facelets
-
-        # Map color indices to face letters
-        kociemba_string = "".join([COLOR_MAP[color_index] for color_index in all_facelets])
-
-    except KeyError as e:
-        raise KeyError(f"Invalid color index {e} found in cube state. Ensure state uses indices {list(COLOR_MAP.keys())}.")
-    except IndexError as e:
-        raise IndexError(f"Indexing error during state conversion: {e}. Check state shape and conversion logic.")
+        # Flatten the face array (row-major) and map color indices to Kociemba face letters
+        for color_index in face_array.flat: # .flat is an iterator
+            try:
+                all_facelets_chars.append(COLOR_MAP[int(color_index)])
+            except KeyError:
+                raise KeyError(f"Invalid color index {int(color_index)} (from original value {color_index}) on face '{face_char}'. Valid indices: {list(COLOR_MAP.keys())}.")
+            except (ValueError, TypeError) as e: # Handles if color_index cannot be int()
+                raise TypeError(f"Color index '{color_index}' on face '{face_char}' could not be converted to int: {e}")
+    
+    kociemba_string = "".join(all_facelets_chars)
 
     if len(kociemba_string) != 54:
-         raise ValueError(f"Internal error: Generated Kociemba string length is {len(kociemba_string)}, expected 54.")
+         # This should ideally not happen if all prior checks pass for a 3x3 cube.
+         raise ValueError(f"Internal error: Generated Kociemba string length is {len(kociemba_string)}, expected 54. This indicates an issue with face processing logic.")
 
     return kociemba_string
 
 
 
 
-def calculate_solve_steps(current_state):
+def calculate_solve_steps(current_faces_state: dict[str, np.ndarray]):
     """
     Calculates the sequence of moves required to solve the cube using the
-    Kociemba algorithm.
+    Kociemba algorithm. Only works for 3x3x3 cubes.
 
     Args:
-        current_state: A NumPy array representing the cube's current color state.
-                       Should be shape (3, 3, 3) for Kociemba.
+        current_faces_state: A dictionary where keys are face names ('U', 'D', ...)
+                             and values are 3x3 NumPy arrays of color indices.
 
     Returns:
         A list of strings, where each string represents a move in standard
@@ -145,13 +103,11 @@ def calculate_solve_steps(current_state):
         # return ['R', 'U', "R'", "U'"]
         return []
 
-    if current_state.shape != (3, 3, 3):
-        print(f"Error: Kociemba solver requires a 3x3x3 cube state, got {current_state.shape}.")
-        return []
+    # Size and shape checks are now handled by _convert_state_to_kociemba_string
 
     try:
-        print("Converting state to Kociemba string...")
-        kociemba_input_string = _convert_state_to_kociemba_string(current_state)
+        print("Converting face state to Kociemba string for Kociemba solver...")
+        kociemba_input_string = _convert_state_to_kociemba_string(current_faces_state)
         print(f"Kociemba input: {kociemba_input_string}")
 
         print("Solving with Kociemba...")

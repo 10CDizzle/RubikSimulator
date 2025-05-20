@@ -37,11 +37,8 @@ class RubiksCube:
         Args:
             size: The dimension of the cube (e.g., 3 for a 3x3x3).
                   Currently, only size 3 is fully supported due to solver integration.
-        """
-        if size != 3:
-            # While the face-based representation could handle NxN,
-            # the solver integration and get_state_for_solver are hardcoded for 3x3.
-            raise ValueError("Currently only supports 3x3x3 cubes due to solver compatibility.")
+        """ # The ValueError for size != 3 is removed to allow NxN cube instances.
+        # Solver compatibility will be handled in get_solve_steps.
         self.size = size
         self.n = size - 1  # Max index (e.g., 2 for 3x3)
         self.faces: Dict[str, np.ndarray] = self._create_solved_faces()
@@ -102,13 +99,10 @@ class RubiksCube:
         Returns:
             A (size, size, size, 6) NumPy array representing the detailed cube state.
 
-        Raises:
-            ValueError: If the cube size is not 3x3x3.
+        Note:
+            The ValueError for size != 3 has been removed as this method is generic
+            and constructs the state based on self.size.
         """
-        if self.size != 3:
-            # The indexing logic below is specific to how faces map to cubie coordinates.
-            # While adaptable, it's currently set for 3x3.
-            raise ValueError("This state representation method is currently tailored for 3x3x3 cubes.")
 
         # Initialize with -1 (indicator for non-existent/internal facelet)
         # Shape: (size, size, size, 6) for (x, y, z, face_orientation)
@@ -321,15 +315,23 @@ class RubiksCube:
             solution, or an empty list if the solver is unavailable or fails.
         """
         print("Requesting solve steps...")
+        if not solver.solver_available:
+            print("Solver library (kociemba) not available. Cannot calculate solve steps.")
+            return []
+
+        if self.size != 3:
+            print(f"The Kociemba solver only supports 3x3x3 cubes. This cube is {self.size}x{self.size}x{self.size}.")
+            print("Solve steps cannot be provided for this size.")
+            return []
+
         try:
-            # Get the state in the format the solver expects
-            solver_state = self.get_state_for_solver()
-            # Call the solver function
-            solution = solver.calculate_solve_steps(solver_state)
+            # Pass a copy of the faces dictionary to the solver.
+            # The solver's input function is now designed to take this directly for 3x3 cubes.
+            current_faces_copy = {name: face.copy() for name, face in self.faces.items()}
+            solution = solver.calculate_solve_steps(current_faces_copy)
             return solution
         except Exception as e:
-            # Catch potential errors during state generation or solving
-            print(f"Error getting solve steps: {e}")
+            print(f"An error occurred while trying to get solve steps: {e}")
             return []
     # --- End Added Method ---
 
