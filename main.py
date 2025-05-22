@@ -24,7 +24,7 @@ app = Ursina(title="Rubik's Cube Simulator")
 
 # --- Cube Size Configuration ---
 MIN_CUBE_SIZE = 2
-MAX_CUBE_SIZE = 7 # Adjust as needed, larger cubes can impact performance
+MAX_CUBE_SIZE = 20 # Adjust as needed, larger cubes can impact performance
 current_cube_size = 3
 
 # --- Model and Viewer Initialization ---
@@ -45,8 +45,11 @@ except Exception as e:
 # print(cube_model)
 
 # --- Camera Setup ---
-camera.position = (10, 12, -20) # Adjusted for better view
-camera.look_at(viewer.parent_entity)
+# Define a base position for a 3x3 cube, which is our reference
+REFERENCE_CAMERA_POSITION_3X3 = (10, 12, -20)
+REFERENCE_CUBE_SIZE_FOR_CAMERA = 3.0 # Use float for accurate scaling
+camera.position = REFERENCE_CAMERA_POSITION_3X3
+camera.look_at(viewer.parent_entity if hasattr(viewer, 'parent_entity') else viewer)
 camera.fov = 40
 
 # --- Animation and State Update Logic ---
@@ -107,7 +110,7 @@ def _update_instruction_text():
     global instruction_text_entity, current_cube_size
     text_content = (
         f"Size: {current_cube_size}x{current_cube_size}x{current_cube_size} (INS/DEL to change)\n"
-        "Keys: U, D, L, R, F, B | Shift: Inverse (') | Ctrl: Double (2)\n"
+        "Mouse: Right-click on facelet quadrant to rotate. Left-drag to rotate cube.\n"
         "S: Solve (3x3 only) | X: Example Seq | C: Scramble | Esc: Quit"
     )
     if instruction_text_entity:
@@ -138,25 +141,8 @@ def input(key):
         _attempt_change_cube_size(current_cube_size - 1)
         return
 
-    move = None
-    base_key = key.replace(' shift', '').replace(' control', '')
-    is_shift = 'shift' in key
-    is_ctrl = 'control' in key
-
-    # Map keys to faces
-    key_face_map = {
-        'u': 'U', 'd': 'D', 'l': 'L', 'r': 'R', 'f': 'F', 'b': 'B'
-    }
-
-    if base_key in key_face_map:
-        face = key_face_map[base_key]
-        if is_shift:
-            move = f"{face}'"
-        elif is_ctrl:
-            move = f"{face}2"
-        else:
-            move = face
-    elif key == 's': # Solve
+    # Keyboard commands that are not direct face moves
+    if key == 's': # Solve
         if not cube_model.is_solved(): # Check if already solved
             print("Requesting solve steps...")
             solution = cube_model.get_solve_steps() # This now checks for 3x3 internally
@@ -183,9 +169,15 @@ def input(key):
         print("Scramble complete. Logical State:")
         print(cube_model)
         return
-
-    if move:
-        apply_sequence(move)
+    
+    # Handle mouse clicks for face rotation
+    if key == 'right mouse down':
+        if viewer and not viewer.is_animating and not is_processing_moves:
+            move = viewer.get_move_from_current_hover()
+            if move:
+                print(f"Mouse click triggered move: {move}")
+                apply_sequence(move)
+        return
 
 def _attempt_change_cube_size(new_size: int):
     """
@@ -225,18 +217,31 @@ def _attempt_change_cube_size(new_size: int):
         # viewer = RubiksCubeViewer(cube_model)
         sys.exit(f"Failed to re-initialize cube for size {new_size}. Exiting.")
 
+    # Adjust camera position for the new cube size to ensure it's in view
+    # Scale the camera distance based on the cube size relative to the reference 3x3 setup
+    scale_factor = current_cube_size / REFERENCE_CUBE_SIZE_FOR_CAMERA
 
-    camera.look_at(viewer.parent_entity if hasattr(viewer, 'parent_entity') else viewer) # Re-target camera
+    new_cam_x = REFERENCE_CAMERA_POSITION_3X3[0] * scale_factor
+    new_cam_y = REFERENCE_CAMERA_POSITION_3X3[1] * scale_factor
+    new_cam_z = REFERENCE_CAMERA_POSITION_3X3[2] * scale_factor # More negative z means further away
+
+    camera.position = (new_cam_x, new_cam_y, new_cam_z)
+    
+    # Ensure the camera is looking at the new cube
+    camera.look_at(viewer.parent_entity if hasattr(viewer, 'parent_entity') else viewer)
+    
     _update_instruction_text() # Update UI
     print(f"Cube size changed to {current_cube_size}x{current_cube_size}x{current_cube_size}.")
 
 
 def update():
     """Ursina update function, called every frame."""
+    # Update hover highlights first
+    if viewer: # viewer might be briefly None during size change
+        viewer.update_hover_highlight()
+
     if mouse.left: # Check if the left mouse button is held down
-        # Prevent dragging during animation/processing
-        if viewer.is_animating or is_processing_moves:
-            return
+        # Allow cube rotation even during animation, but not processing a sequence (is_processing_moves)
 
         # Rotate the parent entity based on mouse movement
         # Adjust sensitivity as needed
@@ -245,6 +250,7 @@ def update():
         if target_entity:
             target_entity.rotation_y += mouse.delta[0] * sensitivity
             target_entity.rotation_x -= mouse.delta[1] * sensitivity
+
 
 # --- Run Application ---
 if __name__ == '__main__':

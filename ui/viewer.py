@@ -1,5 +1,5 @@
 # c:\Users\Chris\Documents\GitHub\RubikSimulator\ui\viewer.py
-from ursina import Entity, color, Quad, load_model, Vec3, scene, destroy, invoke, Sequence, Func, Wait, curve
+from ursina import Entity, color, Quad, load_model, Vec3, scene, destroy, invoke, Sequence, Func, Wait, curve, mouse
 import numpy as np # Keep numpy for state checking if needed
 import sys
 from typing import TYPE_CHECKING # Import for type hinting
@@ -50,6 +50,15 @@ class RubiksCubeViewer:
         self.backing_pieces = {}
         self._initial_update_done = False # Flag to print state only once
         self.is_animating = False # Flag to prevent concurrent animations
+
+        # --- Attributes for mouse interaction ---
+        self.hovered_facelet_details = None  # Tuple: (facelet_entity, quadrant_name) for actionable hover
+        self.last_hovered_facelet_entity = None # Stores the last facelet entity that was generally hovered
+        self.original_facelet_colors = {}    # Stores original color of facelets for highlighting
+        self.quadrant_highlight_indicator = None # Entity to show quadrant highlight
+        self.highlight_intensity = 0.3       # How much to lighten/mix color for facelet highlight
+        self.quadrant_dead_zone = 0.15       # Percentage of facelet half-size for dead zone (e.g., 0.1 means 10% dead zone from center)
+
         self.create_visualization()
         self.update_colors() # Initial color update
 
@@ -136,7 +145,9 @@ class RubiksCubeViewer:
                                     double_sided=False,
                                     name=f"facelet_{info['name']}_{x}_{y}_{z}",
                                     # Store logical coordinates and face info for easy lookup
-                                    logic_key=facelet_key
+                                    logic_key=facelet_key,
+                                    main_face_name=info['name'], # Store 'U', 'F', etc. for interaction
+                                    collider='box' # Ensure it's collidable for mouse hover
                                 )
                                 facelet.world_parent = self.parent_entity
                                 self.facelets[facelet_key] = facelet
@@ -373,3 +384,98 @@ class RubiksCubeViewer:
             
         self.is_animating = False
         print(f"[DEBUG] _finish_animation END. Parent entity world_rotation: {self.parent_entity.world_rotation}, world_position: {self.parent_entity.world_position}. Move completed.")
+
+    def update_hover_highlight(self):
+        """Updates visual highlights for hovered facelets and their quadrants."""
+        # 1. Restore color of the previously generally hovered facelet
+        if self.last_hovered_facelet_entity:
+            if self.last_hovered_facelet_entity in self.original_facelet_colors:
+                self.last_hovered_facelet_entity.color = self.original_facelet_colors[self.last_hovered_facelet_entity]
+            self.last_hovered_facelet_entity = None
+
+        # Always disable quadrant indicator and clear actionable hover details initially for this frame
+        if self.quadrant_highlight_indicator:
+            self.quadrant_highlight_indicator.enabled = False
+        self.hovered_facelet_details = None  # Clears details for a move action
+
+        # 2. Check current hover
+        current_hovered_entity = mouse.hovered_entity
+
+        if current_hovered_entity and hasattr(current_hovered_entity, 'main_face_name') and \
+           current_hovered_entity.name.startswith('facelet_'):
+            facelet = current_hovered_entity
+            self.last_hovered_facelet_entity = facelet  # This facelet is being hovered generally
+
+            # Store original color if not already stored
+            self.original_facelet_colors.setdefault(facelet, facelet.color)
+
+            # Highlight the facelet itself (general hover) by interpolating its color towards white
+            original_c = self.original_facelet_colors[facelet]
+            white_c = color.white # This is a Vec4
+            facelet.color = original_c * (1 - self.highlight_intensity) + white_c * self.highlight_intensity
+
+            # Determine quadrant for actionable highlight (for click-to-move)
+            # If 'facelet' is the 'mouse.hovered_entity', then 'mouse.point' contains
+            # the intersection coordinates in the local space of 'facelet'.
+            if mouse.point: # Check if mouse.point is not None (i.e., a valid intersection)
+                local_point = mouse.point # Use mouse.point, which is local to mouse.hovered_entity
+                lx, ly = local_point.x, local_point.y
+
+                # Facelet Quad model is 0.9x0.9, so local coords range roughly +/- 0.45
+                # Dead zone is relative to this half-size (0.45)
+                abs_dead_zone = self.quadrant_dead_zone * 0.45
+                quadrant_name = None
+
+                if abs(lx) > abs(ly):  # More horizontal than vertical
+                    if lx > abs_dead_zone: quadrant_name = "right"
+                    elif lx < -abs_dead_zone: quadrant_name = "left"
+                elif abs(ly) > abs(lx):  # More vertical than horizontal
+                    if ly > abs_dead_zone: quadrant_name = "up"
+                    elif ly < -abs_dead_zone: quadrant_name = "down"
+                # If in dead zone or exactly on axis lines, quadrant_name remains None
+
+                if quadrant_name:
+                    self.hovered_facelet_details = (facelet, quadrant_name) # Set for action
+
+                    # Setup and position quadrant_highlight_indicator
+                    if not self.quadrant_highlight_indicator:
+                        self.quadrant_highlight_indicator = Entity(
+                            model=Quad(scale=(0.25, 0.25)),  # Smaller quad for indicator
+                            color=color.rgba(255, 255, 0, 200),  # Semi-transparent yellow
+                            parent=facelet,
+                            unlit=True,
+                            double_sided=True,
+                            z=-0.01  # Slightly in front of the facelet surface (local Z)
+                        )
+                    
+                    self.quadrant_highlight_indicator.parent = facelet # Ensure parented correctly
+                    self.quadrant_highlight_indicator.enabled = True
+
+                    # Position indicator towards the edge of the facelet.
+                    # Facelet half-size is 0.45. Indicator half-size is 0.125.
+                    # Position indicator center at ~60% towards the edge from facelet center.
+                    offset_dist = 0.45 * 0.6
+                    if quadrant_name == "right": self.quadrant_highlight_indicator.position = (offset_dist, 0, -0.01)
+                    elif quadrant_name == "left": self.quadrant_highlight_indicator.position = (-offset_dist, 0, -0.01)
+                    elif quadrant_name == "up": self.quadrant_highlight_indicator.position = (0, offset_dist, -0.01)
+                    elif quadrant_name == "down": self.quadrant_highlight_indicator.position = (0, -offset_dist, -0.01)
+
+    def get_move_from_current_hover(self) -> str | None:
+        """
+        Determines the cube move based on the currently hovered facelet and active quadrant.
+        Returns a move string (e.g., "F", "U'") or None if no actionable hover.
+        """
+        if self.hovered_facelet_details:
+            facelet_entity, quadrant_name = self.hovered_facelet_details
+
+            # main_face_name was stored on the facelet entity during creation
+            main_face_name = facelet_entity.main_face_name
+
+            # Map quadrant to CW/CCW rotation of the face
+            # "Right" and "Up" quadrants on the facelet surface map to a CW turn of that face.
+            # "Left" and "Down" quadrants on the facelet surface map to a CCW turn of that face.
+            if quadrant_name in ("right", "up"):
+                return main_face_name  # Clockwise
+            elif quadrant_name in ("left", "down"):
+                return f"{main_face_name}'"  # Counter-clockwise
+        return None
