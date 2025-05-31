@@ -364,6 +364,6 @@ class RubiksCubeViewer:
             main_face_name = facelet_entity.main_face_name
             if quadrant_name in ("right", "up"):
                 return main_face_name
-            elif quadrant_name in ("left", "down"):
+            elif quadrant_name in ("left", "down"): 
                 return f"{main_face_name}'"
         return None
