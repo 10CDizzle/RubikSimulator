@@ -266,13 +266,28 @@ class RubiksCubeViewer:
             return
 
         self.is_animating = True
-        pivot = Entity(parent=self.parent_entity, name=f"pivot_{move}", position=(0,0,0), rotation=(0,0,0))
+
+        # Create a temporary pivot entity for rotation
+        pivot = Entity(parent=self.parent_entity, name=f"pivot_{move}")
+
+        # Parent the pieces to the pivot
         for p in pieces_to_move:
             p.world_parent = pivot
-        ursina_animation_angle = -angle
-        if face_char in ('U', 'D'): pivot.animate_rotation_y(ursina_animation_angle, duration=duration, curve=curve.linear)
-        elif face_char in ('L', 'R'): pivot.animate_rotation_x(ursina_animation_angle, duration=duration, curve=curve.linear)
-        elif face_char in ('F', 'B'): pivot.animate_rotation_z(ursina_animation_angle, duration=duration, curve=curve.linear)
+
+        # Determine the rotation axis and angle for the animation
+        rotation_axis = None
+        if face_char in ('U', 'D'):
+            rotation_axis = 'rotation_y'
+        elif face_char in ('L', 'R'):
+            rotation_axis = 'rotation_x'
+        elif face_char in ('F', 'B'):
+            rotation_axis = 'rotation_z'
+
+        # Animate the pivot
+        if rotation_axis:
+            pivot.animate(rotation_axis, -angle, duration=duration, curve=curve.linear)
+
+        # Schedule the cleanup function to run after the animation
         invoke(self._finish_animation, pivot, pieces_to_move, delay=duration + 0.01)
 
     def _finish_animation(self, pivot: Entity, moved_pieces: list):
@@ -313,7 +328,6 @@ class RubiksCubeViewer:
 
             if mouse.point is not None:
                 try:
-                    print(f"    [DEBUG] mouse.point (local to {facelet.name}): {mouse.point}")
                     local_point = mouse.point
                     lx, ly = local_point.x, local_point.y
                     abs_dead_zone = self.quadrant_dead_zone * 0.45
@@ -321,23 +335,17 @@ class RubiksCubeViewer:
                     
                     # THE KEY CHANGE IS HERE: Compare local_point.z against 0.5
                     expected_collider_surface_z = 0.5 
-                    print(f"      [DEBUG] local_point.z: {local_point.z:.4f}, expected_collider_surface_z: {expected_collider_surface_z:.4f}")
 
                     if abs(local_point.z - expected_collider_surface_z) < 0.02: # Check against 0.5
-                        print(f"        [DEBUG] Hit front face (assuming unit collider Z). lx: {lx:.2f}, ly: {ly:.2f}, abs_dead_zone: {abs_dead_zone:.2f}")
                         if abs(lx) > abs(ly):
                             if lx > abs_dead_zone: quadrant_name = "right"
                             elif lx < -abs_dead_zone: quadrant_name = "left"
                         elif abs(ly) > abs(lx):
                             if ly > abs_dead_zone: quadrant_name = "up"
                             elif ly < -abs_dead_zone: quadrant_name = "down"
-                        print(f"        [DEBUG] Determined quadrant_name: {quadrant_name}")
-                    else:
-                        print(f"      [DEBUG] Hit point NOT on front face of {facelet.name}. local_point.z: {local_point.z:.4f}")
 
                     if quadrant_name:
                         self.hovered_facelet_details = (facelet, quadrant_name)
-                        print(f"          [DEBUG] Actionable hover: {facelet.name}, Quadrant: {quadrant_name}")
                         if not self.quadrant_highlight_indicator:
                             self.quadrant_highlight_indicator = Entity(
                                 model=Quad(scale=(0.25, 0.25)),

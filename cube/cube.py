@@ -224,45 +224,27 @@ class RubiksCube:
                 self.faces['R'][n, :] = self.faces['B'][n, :] # B bottom row -> R bottom row
                 self.faces['B'][n, :] = self.faces['L'][n, :] # L bottom row -> B bottom row
                 self.faces['L'][n, :] = temp # F original bottom row -> L bottom row
-            elif face_char == 'L': # CW Cycle: U[:,0] -> F[:,0] -> D[:,0] -> B[:,n] -> U[:,0]
-                # U's left column moves to F's left column.
-                # F's left column moves to D's left column.
-                # D's left column moves to B's rightmost column (B[:,n], which is the X=0 slice).
-                # B's rightmost column moves to U's left column.
+            elif face_char == 'L': # CW Cycle: U[:,0] -> B[:,n] -> D[:,0] -> F[:,0] -> U[:,0]
                 temp = self.faces['U'][:, 0].copy()
-                self.faces['U'][:, 0] = self.faces['F'][:, 0]
-                self.faces['F'][:, 0] = self.faces['D'][:, 0]
-                self.faces['D'][:, 0] = self.faces['B'][:, n] # B right col -> D left col
-                self.faces['B'][:, n] = temp # U original left col -> B right col
-            elif face_char == 'R': # CW Cycle: U[:,n] -> B[:,0] -> D[:,n] -> F[:,n] -> U[:,n]
-                # U's right column moves to B's leftmost column (B[:,0], which is the X=n slice).
-                # B's leftmost column moves to D's right column.
-                # D's right column moves to F's right column.
-                # F's right column moves to U's right column.
+                self.faces['U'][:, 0] = self.faces['B'][::-1, n]
+                self.faces['B'][:, n] = self.faces['D'][::-1, 0]
+                self.faces['D'][:, 0] = self.faces['F'][:, 0]
+                self.faces['F'][:, 0] = temp
+            elif face_char == 'R': # CW Cycle: U[:,n] -> F[:,n] -> D[:,n] -> B[:,0] -> U[:,n]
                 temp = self.faces['U'][:, n].copy()
-                self.faces['U'][:, n] = self.faces['B'][:, 0]
-                self.faces['B'][:, 0] = self.faces['D'][:, n]
-                self.faces['D'][:, n] = self.faces['F'][:, n]
-                self.faces['F'][:, n] = temp
+                self.faces['U'][:, n] = self.faces['F'][:, n]
+                self.faces['F'][:, n] = self.faces['D'][:, n]
+                self.faces['D'][:, n] = self.faces['B'][::-1, 0]
+                self.faces['B'][:, 0] = temp[::-1]
             elif face_char == 'F': # CW Cycle: U[n,:] -> R[:,0] -> D[0,:] -> L[:,n] -> U[n,:]
-                # U's bottom row (U[n,:]) moves to R's leftmost column (R[:,0]).
-                # R's leftmost column (R[:,0]) moves to D's top row (D[0,:]).
-                # D's top row (D[0,:]) moves to L's rightmost column (L[:,n]).
-                # L's rightmost column (L[:,n]) moves to U's bottom row (U[n,:]).
-                # Reversals are needed due to orientation changes.
                 temp = self.faces['U'][n, :].copy()
                 self.faces['U'][n, :] = self.faces['L'][::-1, n]
-                self.faces['L'][:, n] = self.faces['D'][0, ::-1]
-                self.faces['D'][0, :] = self.faces['R'][::-1, 0]
+                self.faces['L'][:, n] = self.faces['D'][0, :]
+                self.faces['D'][0, :] = self.faces['R'][:, 0][::-1]
                 self.faces['R'][:, 0] = temp
             elif face_char == 'B': # CW Cycle: U[0,:] -> L[:,0] -> D[n,:] -> R[:,n] -> U[0,:]
-                # U's top row (U[0,:]) moves to L's leftmost column (L[:,0]).
-                # L's leftmost column (L[:,0]) moves to D's bottom row (D[n,:]).
-                # D's bottom row (D[n,:]) moves to R's rightmost column (R[:,n]).
-                # R's rightmost column (R[:,n]) moves to U's top row (U[0,:]).
-                # Reversals are needed due to orientation changes.
                 temp = self.faces['U'][0, :].copy()
-                self.faces['U'][0, :] = self.faces['R'][::-1, n]
+                self.faces['U'][0, :] = self.faces['R'][:, n]
                 self.faces['R'][:, n] = self.faces['D'][n, ::-1]
                 self.faces['D'][n, :] = self.faces['L'][::-1, 0]
                 self.faces['L'][:, 0] = temp
